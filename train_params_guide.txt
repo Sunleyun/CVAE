@@ -1,0 +1,50 @@
+训练参数说明（train.py / run_train.py）
+
+数据与输出
+- lmdb: 训练 LMDB 路径；切换数据集时修改
+- outdir: 输出目录（log/ckpt/debug）；按实验分目录
+- device: 训练设备（cuda/cpu）；留空使用自动选择
+- train_ratio: 训练样本比例；当前脚本不做验证集
+- limit: 仅取前 N 条样本做调试；0 表示全量
+- resume: 断点路径；需要继续训练时填写
+
+优化与训练
+- batch_size: 批大小；显存不足就降、噪声大可升
+- num_workers: 数据加载进程数；CPU 有余量可提高
+- epochs: 训练轮数；想充分收敛就提高
+- lr: 学习率；不稳定就降、收敛慢就略升
+- amp: 混合精度；GPU 上可提速/省显存
+- grad_clip: 梯度裁剪阈值；爆梯度就降低
+- log_every: 日志输出间隔步数；想更细就调小
+
+Latent 与 KL
+- z_dim: 总 latent 维度；未显式拆分时自动均分
+- z_intensity_dim: 强度子空间维度；设置后覆盖 z_dim 的分配
+- z_shape_dim: 形态子空间维度；设置后覆盖 z_dim 的分配
+- z_texture_dim: 纹理子空间维度；设置后覆盖 z_dim 的分配
+- spec_map_hw: 形态/纹理特征图尺寸；通常为输入 H/8（200->25）
+- beta: KL 权重；过大可能模糊，过小易过拟合
+- kl_anneal_steps: KL 退火步数；较大更稳定
+
+Mask / 残差 / 重建
+- mask_supervision: S(soft) 或 T(binary) 掩码监督；看标注选择
+- s_thr: S 转二值阈值；想收紧 mask 就调高
+- lambda_mask: mask BCE 权重；mask 学不好就调高
+- lambda_res: 残差回归权重；高光偏弱可提高
+- lambda_auxA: A_hat 辅助重建权重；颜色偏差大可提高
+- res_alpha: 残差前景加权；高光区域不敏感可提高
+- mask_warmup_steps: mask teacher-forcing 退火步数；崩塌就加大
+- detach_mask_in_comp: 组合时是否 detach mask；防止 mask 被残差拖偏
+- max_pos_weight: BCE 正样本权重上限；极稀疏时可适当调高
+- pos_momentum: 正样本比例 EMA；0 关闭，0.9 常用
+
+解耦约束（spec）
+- lambda_intensity: 强度统计约束权重；不准就提高
+- lambda_shape: 形态约束权重；形态偏差大就提高
+- lambda_texture: 高频纹理约束权重；纹理丢失就提高
+- texture_feat: 高频特征类型（laplacian/fft）
+- texture_hf_ratio: FFT 高频截止比例；0.3-0.7 常用
+
+Debug 可视化
+- save_debug_mode: epoch/step/off；epoch 表示每个 epoch 仅保存 1 张
+- save_debug_every: step 模式下的间隔步数

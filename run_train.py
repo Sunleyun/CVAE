@@ -9,11 +9,11 @@ import shlex
 
 DEFAULT = {
     "lmdb": "./tools/shiQ_train.lmdb",
-    "outdir": "./runs_cvae_debug_S_short",
+    "outdir": "./runs_cvae_debug_T_0",
     "device": None,
     "batch_size": 16,
     "num_workers": 4,
-    "epochs": 1,
+    "epochs": 50,
     "lr": 2e-4,
     "z_dim": 32,
     "z_intensity_dim": None,
@@ -23,7 +23,7 @@ DEFAULT = {
     "beta": 0.01,
     "kl_anneal_steps": 2000,
     "mask_supervision": "S",
-    "s_thr": 0.3,
+    "s_thr": 0.25,
     "lambda_mask": 2.0,
     "lambda_res": 1.0,
     "lambda_auxA": 0.2,

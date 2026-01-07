@@ -261,6 +261,85 @@ def make_texture_target(x, method, high_freq_ratio):
         return fft_highpass_map(x, high_freq_ratio)
     return laplacian_map(x)
 
+# ---------- Visualization ----------
+def downsample_series(steps, values, max_points=2000):
+    n = len(steps)
+    if n <= max_points:
+        return steps, values
+    idx = np.linspace(0, n - 1, num=max_points, dtype=np.int32)
+    return [steps[i] for i in idx], [values[i] for i in idx]
+
+
+def plot_metrics(out_path, steps, metrics, best_step=None, max_points=2000):
+    if not steps:
+        return
+    names = list(metrics.keys())
+    cols = 2
+    rows = (len(names) + cols - 1) // cols
+    panel_w = 600
+    panel_h = 260
+    pad = 40
+    img = np.full((rows * panel_h, cols * panel_w, 3), 255, dtype=np.uint8)
+
+    for i, name in enumerate(names):
+        r = i // cols
+        c = i % cols
+        x0 = c * panel_w
+        y0 = r * panel_h
+        x1 = x0 + panel_w
+        y1 = y0 + panel_h
+
+        cv2.rectangle(img, (x0, y0), (x1 - 1, y1 - 1), (220, 220, 220), 1)
+        cv2.putText(img, name, (x0 + 8, y0 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (40, 40, 40), 1)
+
+        s_list, v_list = downsample_series(steps, metrics[name], max_points=max_points)
+        v_arr = np.asarray(v_list, dtype=np.float64)
+        finite = np.isfinite(v_arr)
+        if not finite.any():
+            cv2.putText(img, "no data", (x0 + 8, y0 + 45), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (80, 80, 80), 1)
+            continue
+
+        v_finite = v_arr[finite]
+        v_min = float(v_finite.min())
+        v_max = float(v_finite.max())
+        if v_max <= v_min:
+            v_max = v_min + 1.0
+            v_min = v_min - 1.0
+
+        s_min = float(min(s_list))
+        s_max = float(max(s_list))
+        if s_max <= s_min:
+            s_max = s_min + 1.0
+
+        plot_x0 = x0 + pad
+        plot_y0 = y0 + pad
+        plot_x1 = x1 - pad
+        plot_y1 = y1 - pad
+
+        cv2.line(img, (plot_x0, plot_y1), (plot_x1, plot_y1), (200, 200, 200), 1)
+        cv2.line(img, (plot_x0, plot_y1), (plot_x0, plot_y0), (200, 200, 200), 1)
+
+        prev_pt = None
+        for s, v, ok in zip(s_list, v_arr, finite):
+            if not ok:
+                prev_pt = None
+                continue
+            x = plot_x0 + int(round((s - s_min) / (s_max - s_min) * (plot_x1 - plot_x0)))
+            y = plot_y1 - int(round((v - v_min) / (v_max - v_min) * (plot_y1 - plot_y0)))
+            pt = (x, y)
+            if prev_pt is not None:
+                cv2.line(img, prev_pt, pt, (20, 90, 200), 2)
+            prev_pt = pt
+
+        if best_step is not None and s_min <= best_step <= s_max:
+            bx = plot_x0 + int(round((best_step - s_min) / (s_max - s_min) * (plot_x1 - plot_x0)))
+            cv2.line(img, (bx, plot_y0), (bx, plot_y1), (180, 50, 50), 1)
+
+        label = f"min={v_min:.4f} max={v_max:.4f} last={float(v_finite[-1]):.4f}"
+        cv2.putText(img, label, (x0 + 8, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (80, 80, 80), 1)
+
+    cv2.imwrite(str(out_path), img)
+
 
 # ---------- Train ----------
 def main():
@@ -403,6 +482,24 @@ def main():
     global_step = 0
     use_spec = (args.lambda_intensity > 0) or (args.lambda_shape > 0) or (args.lambda_texture > 0)
     checked_spec_hw = False
+
+    metric_steps = []
+    metric_data = {
+        "loss": [],
+        "res": [],
+        "mask": [],
+        "auxA": [],
+        "kl": [],
+    }
+    if args.lambda_intensity > 0:
+        metric_data["intensity"] = []
+    if args.lambda_shape > 0:
+        metric_data["shape"] = []
+    if args.lambda_texture > 0:
+        metric_data["texture"] = []
+    best_step = None
+    best_loss = float("inf")
+    best_metrics = {}
 
     # EMA of positive ratio for stable pos_weight
     pos_ratio_ema = None
@@ -556,6 +653,38 @@ def main():
                 global_step += 1
                 continue
 
+            loss_val = float(loss.item())
+            rloss_val = float(rloss.item())
+            mloss_val = float(mloss.item())
+            aux_val = float(auxA.item())
+            kl_val = float(klloss.item())
+            metric_steps.append(global_step)
+            metric_data["loss"].append(loss_val)
+            metric_data["res"].append(rloss_val)
+            metric_data["mask"].append(mloss_val)
+            metric_data["auxA"].append(aux_val)
+            metric_data["kl"].append(kl_val)
+            if intensity_loss is not None:
+                metric_data["intensity"].append(float(intensity_loss.item()))
+            if shape_loss is not None:
+                metric_data["shape"].append(float(shape_loss.item()))
+            if texture_loss is not None:
+                metric_data["texture"].append(float(texture_loss.item()))
+
+            if loss_val < best_loss:
+                best_loss = loss_val
+                best_step = global_step
+                best_metrics = {
+                    "loss": loss_val,
+                    "res": rloss_val,
+                    "mask": mloss_val,
+                    "auxA": aux_val,
+                    "kl": kl_val,
+                    "intensity": float(intensity_loss.item()) if intensity_loss is not None else None,
+                    "shape": float(shape_loss.item()) if shape_loss is not None else None,
+                    "texture": float(texture_loss.item()) if texture_loss is not None else None,
+                }
+
             opt.zero_grad(set_to_none=True)
             scaler.scale(loss).backward()
             scaler.unscale_(opt)
@@ -636,6 +765,24 @@ def main():
             print("")
     except Exception:
         pass
+    
+    if metric_steps:
+        try:
+            metrics_path = outdir / "train_metrics.png"
+            plot_metrics(metrics_path, metric_steps, metric_data, best_step=best_step)
+            logger.info(f"[SAVE_METRICS] {metrics_path}")
+        except Exception:
+            logger.exception("[SAVE_METRICS] failed to write train_metrics.png")
+    if best_step is not None:
+        best_path = outdir / "best_step.json"
+        try:
+            with open(best_path, "w", encoding="utf-8") as f:
+                json.dump({"step": best_step, "loss": best_loss, "metrics": best_metrics},
+                          f, ensure_ascii=True, indent=2)
+            logger.info(f"[BEST] step={best_step} loss={best_loss:.6f} saved={best_path}")
+        except Exception:
+            logger.exception("[BEST] failed to write best_step.json")
+
     logger.info("[DONE] training finished.")
 
 
